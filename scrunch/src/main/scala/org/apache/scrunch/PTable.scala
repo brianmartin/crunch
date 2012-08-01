@@ -18,13 +18,12 @@
 package org.apache.scrunch
 
 import java.util.{Collection => JCollect}
-
 import scala.collection.JavaConversions._
-
 import org.apache.crunch.{DoFn, Emitter, FilterFn, MapFn}
 import org.apache.crunch.{GroupingOptions, PTable => JTable, Pair => CPair}
-import org.apache.crunch.lib.{Join, Aggregate, Cogroup, PTables}
+import org.apache.crunch.lib.{Join, Cartesian, Aggregate, Cogroup, PTables}
 import org.apache.scrunch.interpreter.InterpreterRunner
+import org.apache.crunch.lib.Cartesian
 
 class PTable[K, V](val native: JTable[K, V]) extends PCollectionLike[CPair[K, V], PTable[K, V], JTable[K, V]] {
   import PTable._
@@ -99,6 +98,13 @@ class PTable[K, V](val native: JTable[K, V]) extends PCollectionLike[CPair[K, V]
   def fullJoin[V2](other: PTable[K, V2]): PTable[K, (V, V2)] = {
     join[V2](Join.fullJoin[K, V, V2](_, _), other)
   }
+  
+  def cross[K2, V2](other: PTable[K2, V2]): PTable[(K, K2), (V, V2)] = {
+    val ptf = getTypeFamily()
+    val inter = new PTable(Cartesian.cross(this.native, other.native))
+    val f = (k: CPair[K,K2], v: CPair[V,V2]) => CPair.of((k.first(), k.second()), (v.first(), v.second())) 
+    inter.parallelDo(mapFn(f), ptf.tableOf(ptf.tuple2(keyType, other.keyType), ptf.tuple2(valueType, other.valueType)))
+  }
 
   def top(limit: Int, maximize: Boolean) = {
     wrap(Aggregate.top(this.native, limit, maximize))
@@ -119,6 +125,11 @@ class PTable[K, V](val native: JTable[K, V]) extends PCollectionLike[CPair[K, V]
   def materialize(): Iterable[(K, V)] = {
     InterpreterRunner.addReplJarsToJob(native.getPipeline().getConfiguration())
     native.materialize.view.map(x => (x.first, x.second))
+  }
+  
+  def materializeToMap(): Map[K, V] = {
+    InterpreterRunner.addReplJarsToJob(native.getPipeline().getConfiguration())
+    native.materializeToMap().toMap //.view.map(x => (x.first, x.second))
   }
 
   def keyType() = native.getPTableType().getKeyType()
